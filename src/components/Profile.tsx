@@ -107,6 +107,11 @@ export const Profile = React.memo(({ user, savedMnemonics, totalWords, masteredC
           ielts_goal: data.ielts_goal || 7,
           app_theme: data.app_theme || AppTheme.ORANGE
         });
+        
+        // Sync email if missing
+        if (!data.email && user?.email) {
+          supabase.from('profiles').update({ email: user.email }).eq('id', user.id).then();
+        }
       } else {
         // Create profile if not exists
         console.log("Creating profile for user:", user.id);
@@ -114,6 +119,7 @@ export const Profile = React.memo(({ user, savedMnemonics, totalWords, masteredC
           .from('profiles')
           .insert({ 
             id: user.id, 
+            email: user.email,
             username: user.email.split('@')[0], 
             full_name: user.user_metadata?.full_name || '',
             avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.id}`

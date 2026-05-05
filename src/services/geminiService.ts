@@ -119,6 +119,10 @@ export class GeminiService {
     throw lastError;
   }
 
+  /**
+   * Corrects the spelling of a word using AI. 
+   * Returns the original word if no correction is needed.
+   */
   async checkSpelling(word: string): Promise<string> {
     return this.withRetry(async () => {
       const ai = this.getAI();
@@ -137,6 +141,10 @@ export class GeminiService {
     });
   }
 
+  /**
+   * Generates a complete mnemonic object (meaning, acoustic link, imagery link)
+   * in the user's native language using the Keyword Method.
+   */
   async getMnemonic(word: string, targetLanguage: Language): Promise<MnemonicResponse> {
     return this.withRetry(async () => {
       const ai = this.getAI();
@@ -214,6 +222,10 @@ CRITICAL RULES:
     });
   }
 
+  /**
+   * Generates a high-fidelity image based on the mnemonic's visual prompt.
+   * Returns a base64 encoded image string.
+   */
   async generateImage(prompt: string): Promise<string> {
     return this.withRetry(async () => {
       const ai = this.getAI();
@@ -243,6 +255,10 @@ CRITICAL RULES:
     });
   }
 
+  /**
+   * Converts mnemonic text to speech using a bilingual voice model.
+   * Handles English words and native language explanations in one stream.
+   */
   async generateTTS(text: string, targetLanguage: Language): Promise<string> {
     return this.withRetry(async () => {
       const ai = this.getAI();

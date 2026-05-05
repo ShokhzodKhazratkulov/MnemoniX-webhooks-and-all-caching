@@ -20,6 +20,11 @@ const supabase = createClient(
 app.use(bodyParser.json());
 
 // Payme Merchant API Handler
+/**
+ * PAYME MERCHANT API HANDLER
+ * This endpoint implements the Payme Merchant JSON-RPC 2.0 protocol.
+ * Doc: https://developer.help.paycom.uz/metody-merchant-api
+ */
 app.post(["/api/payme", "/api/webhooks/payme"], async (req: Request, res: Response) => {
   const { method, params, id } = req.body;
   const authHeader = req.headers.authorization;
@@ -67,8 +72,11 @@ app.post(["/api/payme", "/api/webhooks/payme"], async (req: Request, res: Respon
   }
 });
 
-// --- Payme Method Handlers ---
+// --- Payme Protocol Method Handlers ---
 
+/**
+ * Validates if an order exists and matches the requested amount before allowing transaction initiation.
+ */
 async function handleCheckPerform(params: any, id: any, res: any) {
   const { amount, account } = params;
   const orderId = account.order_id;
@@ -101,6 +109,9 @@ async function handleCheckPerform(params: any, id: any, res: any) {
   });
 }
 
+/**
+ * Creates a pending transaction state in our database associated with a Payme transaction ID.
+ */
 async function handleCreateTransaction(params: any, id: any, res: any) {
   const { id: paymeId, time, amount, account } = params;
   const orderId = account.order_id;
@@ -135,6 +146,9 @@ async function handleCreateTransaction(params: any, id: any, res: any) {
   });
 }
 
+/**
+ * Marks a transaction as completed, updates the user's subscription expiry, and activates premium features.
+ */
 async function handlePerformTransaction(params: any, id: any, res: any) {
   const { id: paymeId } = params;
 

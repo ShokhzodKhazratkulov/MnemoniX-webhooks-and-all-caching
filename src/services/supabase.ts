@@ -1,5 +1,10 @@
 
 /// <reference types="vite/client" />
+/**
+ * SUPABASE SERVICE
+ * Shared Supabase client and storage helpers.
+ * Used for database interaction and image/audio URL resolution.
+ */
 import { supabase } from '../supabaseClient';
 
 // Helper to get public URL for storage

@@ -19,6 +19,11 @@ interface Props {
 
 const gemini = new GeminiService();
 
+/**
+ * COMPONENTS: MnemonicCard
+ * This component displays the generated AI mnemonic, handles image revealing,
+ * TTS (Text-to-Speech) playback, and "Deep Dive" nuance generation.
+ */
 export const MnemonicCard: React.FC<Props> = React.memo(({ data, imageUrl, language, mnemonicId, onSearch, onPractice, t }) => {
   const [timer, setTimer] = useState(5);
   const [showContent, setShowContent] = useState(false);

@@ -60,19 +60,25 @@ import { TermsOfService } from './components/TermsOfService';
 import { TRANSLATIONS } from './constants/translations';
 import { Profile as UserProfileType } from './types';
 
+/**
+ * MAIN APPLICATION STATE & INITIALIZATION
+ */
 export default function App() {
-  const [user, setUser] = useState<any>(null);
-  const [isGuest, setIsGuest] = useState(true);
+  // Authentication & User State
+  const [user, setUser] = useState<any>(null); // Current Supabase Auth user object
+  const [isGuest, setIsGuest] = useState(true); // Toggle for authenticated vs guest sessions
   const [hasKey, setHasKey] = useState(true);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false); // Ensures auth check completes before rendering UI
 
+  // Core Service Instances (Memoized to prevent recreation)
   const gemini = React.useMemo(() => new GeminiService(), []);
 
+  // UI Navigation & View State
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<AppView>(AppView.HOME);
-  const [viewHistory, setViewHistory] = useState<AppView[]>([]);
-  const [showTour, setShowTour] = useState(false);
-  const [state, setState] = useState<AppState>(AppState.IDLE);
+  const [view, setView] = useState<AppView>(AppView.HOME); // Controls which main feature is visible
+  const [viewHistory, setViewHistory] = useState<AppView[]>([]); // Navigation history for "Back" functionality
+  const [showTour, setShowTour] = useState(false); // Controls the onboarding experience
+  const [state, setState] = useState<AppState>(AppState.IDLE); // High-level app state (IDLE, SEARCHING, RESULTS, etc.)
   const [isFlashcardDetailOpen, setIsFlashcardDetailOpen] = useState(false);
   const [isFlashcardReviewOpen, setIsFlashcardReviewOpen] = useState(false);
   const [forceCloseFlashcardDetail, setForceCloseFlashcardDetail] = useState(false);
@@ -307,6 +313,14 @@ export default function App() {
         setUserProfile(data);
         // Update cache safely
         safeSetLocalStorage(cacheKey, JSON.stringify(data));
+        
+        // Sync email if missing
+        if (!data.email && user?.email) {
+          supabase.from('profiles').update({ email: user.email }).eq('id', userId).then(({ error }) => {
+            if (!error) setUserProfile(prev => prev ? { ...prev, email: user.email } as UserProfileType : null);
+          });
+        }
+
         // Sync app language with user's preferred language only if no UI language is saved
         const savedLang = localStorage.getItem('mnemonix_ui_language');
         if (data.preferred_language && !savedLang) {
@@ -323,6 +337,7 @@ export default function App() {
           .from('profiles')
           .insert({ 
             id: userId, 
+            email: user?.email || '',
             username: user?.email?.split('@')[0] || 'user', 
             full_name: user?.user_metadata?.full_name || '',
             avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
@@ -521,6 +536,10 @@ export default function App() {
     return index;
   }, [savedMnemonics, contentLanguage]);
 
+  /**
+   * CORE SEARCH ENGINE
+   * Handles spell checking, global library lookup, AI generation, and result storage.
+   */
   const handleSearch = async (e?: React.FormEvent, word?: string) => {
     if (e) e.preventDefault();
     
