@@ -93,7 +93,10 @@ async function handleCheckPerform(params: any, id: any, res: any) {
   }
 
   // Payme amounts are in Tiyin (1 UZS = 100 Tiyin)
-  if (Number(payment.amount) !== Number(amount)) {
+  // We store amount in UZS in our database, so we multiply by 100 for comparison
+  const expectedAmountInTiyin = Number(payment.amount) * 100;
+  if (expectedAmountInTiyin !== Number(amount)) {
+    console.warn(`[Payme] Amount mismatch. Expected: ${expectedAmountInTiyin}, Received: ${amount}`);
     return res.json({ id, error: { code: -31050, message: "Incorrect amount" } });
   }
 
@@ -124,7 +127,22 @@ async function handleCreateTransaction(params: any, id: any, res: any) {
 
   // If transaction already exists but has different ID
   if (payment.payme_transaction_id && payment.payme_transaction_id !== paymeId) {
-    return res.json({ id, error: { code: -31099, message: "Transaction already exists" } });
+    return res.json({ id, error: { code: -31099, message: "Transaction already exists with different ID" } });
+  }
+
+  // IDEMPOTENCY: If transaction already exists with same ID, just return it
+  if (payment.payme_transaction_id === paymeId) {
+    if (payment.status === 'cancelled') {
+        return res.json({ id, error: { code: -31008, message: "Transaction already cancelled" } });
+    }
+    return res.json({
+      id,
+      result: {
+        create_time: Number(payment.payme_time),
+        transaction: payment.id.toString(),
+        state: payment.status === 'paid' ? 2 : 1
+      }
+    });
   }
 
   // Update payment with payme transaction ID and state
@@ -167,6 +185,10 @@ async function handlePerformTransaction(params: any, id: any, res: any) {
         state: 2
       }
     });
+  }
+
+  if (payment.status === 'cancelled') {
+    return res.json({ id, error: { code: -31008, message: "Cannot perform cancelled transaction" } });
   }
 
   // FULFILLMENT: Calculate subscription expansion
@@ -267,7 +289,7 @@ async function handleGetStatement(params: any, id: any, res: any) {
   const transactions = (payments || []).map(p => ({
     id: p.payme_transaction_id,
     time: Number(p.payme_time),
-    amount: p.amount,
+    amount: Number(p.amount) * 100, // Return in Tiyin
     account: { order_id: p.order_id },
     create_time: Number(p.payme_time),
     perform_time: p.status === 'paid' ? new Date(p.updated_at).getTime() : 0,
