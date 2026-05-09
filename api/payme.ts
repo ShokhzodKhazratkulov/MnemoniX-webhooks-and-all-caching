@@ -8,9 +8,26 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || ""
 );
 
+interface PaymeError {
+  code: number;
+  message: {
+    ru: string;
+    uz: string;
+    en: string;
+  };
+  data?: string;
+}
+
+function createError(code: number, ru: string, uz: string, en: string, data?: string): PaymeError {
+  return {
+    code,
+    message: { ru, uz, en },
+    data
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Payme Merchant API Handler
-  // Doc: https://developer.help.paycom.uz/metody-merchant-api
   
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -24,13 +41,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Basic Auth Check
   const paymeKey = process.env.PAYME_KEY;
   if (!paymeKey) {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -32504, message: "Server configuration error" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-32504, "Ошибка конфигурации сервера", "Server konfiguratsiyasi xatosi", "Server configuration error")
+    });
   }
 
   const expectedAuth = `Basic ${Buffer.from(`Paycom:${paymeKey}`).toString('base64')}`;
   
   if (!authHeader || authHeader !== expectedAuth) {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -32504, message: "Error auth" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-32504, "Ошибка авторизации", "Avtorizatsiya xatosi", "Error auth")
+    });
   }
 
   try {
@@ -48,52 +73,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case "GetStatement":
         return await handleGetStatement(params, id, res);
       default:
-        return res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
+        return res.json({ 
+          jsonrpc: "2.0", 
+          id, 
+          error: createError(-32601, "Метод не найден", "Metod topilmadi", "Method not found")
+        });
     }
   } catch (err) {
     console.error("Payme API Error:", err);
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Internal Server Error" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31008, "Внутренняя ошибка сервера", "Ichki server xatosi", "Internal Server Error")
+    });
   }
 }
 
-// --- Handler Functions (Adapted for VercelResponse) ---
+// --- Handler Functions ---
 
 async function handleCheckPerform(params: any, id: any, res: VercelResponse) {
   const { amount, account } = params;
   const orderId = account.order_id;
+  
   if (!orderId) {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order ID missing" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31050, "ID заказа отсутствует", "Buyurtma ID si yo'q", "Order ID missing", "order_id")
+    });
   }
 
   const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
+  
   if (!payment) {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31050, "Заказ не найден", "Buyurtma topilmadi", "Order not found", "order_id")
+    });
   }
 
-  // If already paid, it's "Blocked"
   if (payment.status === 'paid') {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order already paid" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31050, "Заказ уже оплачен", "Buyurtma allaqachon to'langan", "Order already paid", "order_id")
+    });
   }
 
-  // If another transaction is in progress, it's "Being processed"
   if (payment.payme_transaction_id && payment.status === 'pending') {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Another transaction is being processed" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31050, "Другая транзакция в процессе", "Boshqa tranzaksiya jarayonda", "Another transaction is being processed", "order_id")
+    });
   }
 
-  // Check amount
-  const expectedAmountInTiyin = Number(payment.amount) * 100;
+  const expectedAmountInTiyin = Number(payment.amount);
   if (expectedAmountInTiyin !== Number(amount)) {
-    console.warn(`[Payme] Amount mismatch for order ${orderId}. Expected ${expectedAmountInTiyin}, received ${amount}`);
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Incorrect amount" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31050, "Неверная сумма", "Noto'g'ri summa", "Incorrect amount", "amount")
+    });
   }
 
-  // Valid and ready: "Awaiting payment"
   return res.json({
     jsonrpc: "2.0",
     id,
-    result: {
-      allow: true
-    }
+    result: { allow: true }
   });
 }
 
@@ -102,14 +150,22 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
   const orderId = account.order_id;
 
   const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
+  
   if (!payment) {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31050, "Заказ не найден", "Buyurtma topilmadi", "Order not found", "order_id")
+    });
   }
 
-  // Idempotency: If the SAME Payme transaction is already linked to this order
   if (payment.payme_transaction_id === paymeId) {
     if (payment.status === 'cancelled') {
-        return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Transaction already cancelled" } });
+        return res.json({ 
+          jsonrpc: "2.0", 
+          id, 
+          error: createError(-31008, "Транзакция уже отменена", "Tranzaksiya allaqachon bekor qilingan", "Transaction already cancelled")
+        });
     }
     return res.json({
       jsonrpc: "2.0",
@@ -122,12 +178,14 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
-  // If order already has a DIFFERENT transaction linked
   if (payment.payme_transaction_id) {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31099, message: "Order occupied by another transaction" } });
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31099, "Заказ занят другой транзакцией", "Buyurtma boshqa tranzaksiya bilan band", "Order occupied by another transaction")
+    });
   }
 
-  // Link transaction to order
   await supabase.from('payments').update({
     payme_transaction_id: paymeId,
     status: 'pending',
@@ -148,7 +206,14 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
 async function handlePerformTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId } = params;
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31003, message: "Transaction not found" } });
+  
+  if (!payment) {
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31003, "Транзакция не найдена", "Tranzaksiya topilmadi", "Transaction not found")
+    });
+  }
 
   if (payment.status === 'paid') {
     return res.json({
@@ -162,7 +227,13 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
     });
   }
 
-  if (payment.status === 'cancelled') return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Cannot perform cancelled" } });
+  if (payment.status === 'cancelled') {
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31008, "Невозможно выполнить отмененную транзакцию", "Bekor qilingan tranzaksiyani bajarib bo'lmaydi", "Cannot perform cancelled")
+    });
+  }
 
   const months = payment.package_type === '1_month' ? 1 : payment.package_type === '3_months' ? 3 : 6;
   const { data: profile } = await supabase.from('profiles').select('subscription_expires_at').eq('id', payment.user_id).single();
@@ -198,9 +269,22 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
 async function handleCancelTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId, reason } = params;
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31003, message: "Transaction not found" } });
+  
+  if (!payment) {
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31003, "Транзакция не найдена", "Tranzaksiya topilmadi", "Transaction not found")
+    });
+  }
 
-  if (payment.status === 'paid') return res.json({ jsonrpc: "2.0", id, error: { code: -31007, message: "Cannot cancel paid" } });
+  if (payment.status === 'paid') {
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31007, "Нельзя отменить оплаченную транзакцию", "To'langan tranzaksiyani bekor qilib bo'lmaydi", "Cannot cancel paid")
+    });
+  }
 
   await supabase.from('payments').update({
     status: 'cancelled',
@@ -245,7 +329,7 @@ async function handleGetStatement(params: any, id: any, res: VercelResponse) {
   const transactions = (payments || []).map(p => ({
     id: p.payme_transaction_id,
     time: Number(p.payme_time),
-    amount: Number(p.amount) * 100,
+    amount: Number(p.amount),
     account: { order_id: p.order_id },
     create_time: Number(p.payme_time),
     perform_time: p.status === 'paid' ? new Date(p.updated_at).getTime() : 0,
