@@ -195,7 +195,7 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
   }).eq('order_id', orderId);
 
   if (updateError) {
-    console.error(`[Payme] CreateTransaction Update Error for order ${orderId}:`, updateError);
+    console.error(`[Payme] CreateTransaction Update Error:`, updateError);
     return res.json({ 
       jsonrpc: "2.0", 
       id, 
