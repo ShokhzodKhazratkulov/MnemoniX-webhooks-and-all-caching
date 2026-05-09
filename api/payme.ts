@@ -61,25 +61,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 async function handleCheckPerform(params: any, id: any, res: VercelResponse) {
   const { amount, account } = params;
   const orderId = account.order_id;
-  if (!orderId) return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order ID missing" } });
+  if (!orderId) {
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order ID missing" } });
+  }
 
   const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
-  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
+  if (!payment) {
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
+  }
 
+  // If already paid, it's "Blocked"
+  if (payment.status === 'paid') {
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order already paid" } });
+  }
+
+  // If another transaction is in progress, it's "Being processed"
+  if (payment.payme_transaction_id && payment.status === 'pending') {
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Another transaction is being processed" } });
+  }
+
+  // Check amount
   const expectedAmountInTiyin = Number(payment.amount) * 100;
   if (expectedAmountInTiyin !== Number(amount)) {
+    console.warn(`[Payme] Amount mismatch for order ${orderId}. Expected ${expectedAmountInTiyin}, received ${amount}`);
     return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Incorrect amount" } });
   }
 
+  // Valid and ready: "Awaiting payment"
   return res.json({
     jsonrpc: "2.0",
     id,
     result: {
-      allow: true,
-      detail: {
-        order_id: orderId,
-        description: `MnemoniX Premium: ${payment.package_type}`
-      }
+      allow: true
     }
   });
 }
@@ -89,14 +102,15 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
   const orderId = account.order_id;
 
   const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
-  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
-
-  if (payment.payme_transaction_id && payment.payme_transaction_id !== paymeId) {
-    return res.json({ jsonrpc: "2.0", id, error: { code: -31099, message: "Transaction already exists" } });
+  if (!payment) {
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
   }
 
+  // Idempotency: If the SAME Payme transaction is already linked to this order
   if (payment.payme_transaction_id === paymeId) {
-    if (payment.status === 'cancelled') return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Transaction already cancelled" } });
+    if (payment.status === 'cancelled') {
+        return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Transaction already cancelled" } });
+    }
     return res.json({
       jsonrpc: "2.0",
       id,
@@ -108,6 +122,12 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
+  // If order already has a DIFFERENT transaction linked
+  if (payment.payme_transaction_id) {
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31099, message: "Order occupied by another transaction" } });
+  }
+
+  // Link transaction to order
   await supabase.from('payments').update({
     payme_transaction_id: paymeId,
     status: 'pending',
