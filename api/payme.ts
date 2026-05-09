@@ -24,13 +24,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Basic Auth Check
   const paymeKey = process.env.PAYME_KEY;
   if (!paymeKey) {
-    return res.json({ id, error: { code: -32504, message: "Server configuration error" } });
+    return res.json({ jsonrpc: "2.0", id, error: { code: -32504, message: "Server configuration error" } });
   }
 
   const expectedAuth = `Basic ${Buffer.from(`Paycom:${paymeKey}`).toString('base64')}`;
   
   if (!authHeader || authHeader !== expectedAuth) {
-    return res.json({ id, error: { code: -32504, message: "Error auth" } });
+    return res.json({ jsonrpc: "2.0", id, error: { code: -32504, message: "Error auth" } });
   }
 
   try {
@@ -48,11 +48,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case "GetStatement":
         return await handleGetStatement(params, id, res);
       default:
-        return res.json({ id, error: { code: -32601, message: "Method not found" } });
+        return res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
     }
   } catch (err) {
     console.error("Payme API Error:", err);
-    return res.json({ id, error: { code: -31008, message: "Internal Server Error" } });
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Internal Server Error" } });
   }
 }
 
@@ -61,17 +61,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 async function handleCheckPerform(params: any, id: any, res: VercelResponse) {
   const { amount, account } = params;
   const orderId = account.order_id;
-  if (!orderId) return res.json({ id, error: { code: -31050, message: "Order ID missing" } });
+  if (!orderId) return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order ID missing" } });
 
   const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
-  if (!payment) return res.json({ id, error: { code: -31050, message: "Order not found" } });
+  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
 
   const expectedAmountInTiyin = Number(payment.amount) * 100;
   if (expectedAmountInTiyin !== Number(amount)) {
-    return res.json({ id, error: { code: -31050, message: "Incorrect amount" } });
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Incorrect amount" } });
   }
 
   return res.json({
+    jsonrpc: "2.0",
     id,
     result: {
       allow: true,
@@ -88,15 +89,16 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
   const orderId = account.order_id;
 
   const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
-  if (!payment) return res.json({ id, error: { code: -31050, message: "Order not found" } });
+  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31050, message: "Order not found" } });
 
   if (payment.payme_transaction_id && payment.payme_transaction_id !== paymeId) {
-    return res.json({ id, error: { code: -31099, message: "Transaction already exists" } });
+    return res.json({ jsonrpc: "2.0", id, error: { code: -31099, message: "Transaction already exists" } });
   }
 
   if (payment.payme_transaction_id === paymeId) {
-    if (payment.status === 'cancelled') return res.json({ id, error: { code: -31008, message: "Transaction already cancelled" } });
+    if (payment.status === 'cancelled') return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Transaction already cancelled" } });
     return res.json({
+      jsonrpc: "2.0",
       id,
       result: {
         create_time: Number(payment.payme_time),
@@ -113,6 +115,7 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
   }).eq('order_id', orderId);
 
   return res.json({
+    jsonrpc: "2.0",
     id,
     result: {
       create_time: Number(time),
@@ -125,10 +128,11 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
 async function handlePerformTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId } = params;
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-  if (!payment) return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
+  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31003, message: "Transaction not found" } });
 
   if (payment.status === 'paid') {
     return res.json({
+      jsonrpc: "2.0",
       id,
       result: {
         perform_time: new Date(payment.updated_at).getTime(),
@@ -138,7 +142,7 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
     });
   }
 
-  if (payment.status === 'cancelled') return res.json({ id, error: { code: -31008, message: "Cannot perform cancelled" } });
+  if (payment.status === 'cancelled') return res.json({ jsonrpc: "2.0", id, error: { code: -31008, message: "Cannot perform cancelled" } });
 
   const months = payment.package_type === '1_month' ? 1 : payment.package_type === '3_months' ? 3 : 6;
   const { data: profile } = await supabase.from('profiles').select('subscription_expires_at').eq('id', payment.user_id).single();
@@ -161,6 +165,7 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
   }).eq('id', payment.id);
 
   return res.json({
+    jsonrpc: "2.0",
     id,
     result: {
       perform_time: now,
@@ -173,9 +178,9 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
 async function handleCancelTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId, reason } = params;
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-  if (!payment) return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
+  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31003, message: "Transaction not found" } });
 
-  if (payment.status === 'paid') return res.json({ id, error: { code: -31007, message: "Cannot cancel paid" } });
+  if (payment.status === 'paid') return res.json({ jsonrpc: "2.0", id, error: { code: -31007, message: "Cannot cancel paid" } });
 
   await supabase.from('payments').update({
     status: 'cancelled',
@@ -184,6 +189,7 @@ async function handleCancelTransaction(params: any, id: any, res: VercelResponse
   }).eq('id', payment.id);
 
   return res.json({
+    jsonrpc: "2.0",
     id,
     result: {
       cancel_time: Date.now(),
@@ -196,9 +202,10 @@ async function handleCancelTransaction(params: any, id: any, res: VercelResponse
 async function handleCheckTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId } = params;
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-  if (!payment) return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
+  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31003, message: "Transaction not found" } });
 
   return res.json({
+    jsonrpc: "2.0",
     id,
     result: {
       create_time: Number(payment.payme_time || 0),
@@ -228,5 +235,5 @@ async function handleGetStatement(params: any, id: any, res: VercelResponse) {
     reason: p.cancel_reason || null
   }));
 
-  return res.json({ id, result: { transactions } });
+  return res.json({ jsonrpc: "2.0", id, result: { transactions } });
 }
