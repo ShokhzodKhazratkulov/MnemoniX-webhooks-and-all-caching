@@ -188,18 +188,18 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
-  const { data: updatedPayment, error: updateError } = await supabase.from('payments').update({
+  const { error: updateError } = await supabase.from('payments').update({
     payme_transaction_id: paymeId,
     status: 'pending',
     payme_time: time
-  }).eq('order_id', orderId).select().single();
+  }).eq('order_id', orderId);
 
-  if (updateError || !updatedPayment) {
+  if (updateError) {
     console.error(`[Payme] CreateTransaction Update Error for order ${orderId}:`, updateError);
     return res.json({ 
       jsonrpc: "2.0", 
       id, 
-      error: createError(-31008, "Ошибка базы данных", "Ma'lumotlar bazasi xatosi", "Database error")
+      error: createError(-31008, "Ошибка базы данных", "Ma'lumotlar bazasi xatosi", "Database error", updateError.message)
     });
   }
 
@@ -207,8 +207,8 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     jsonrpc: "2.0",
     id,
     result: {
-      create_time: Number(updatedPayment.payme_time),
-      transaction: updatedPayment.id.toString(),
+      create_time: Number(time),
+      transaction: payment.id.toString(),
       state: 1
     }
   });
