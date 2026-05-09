@@ -188,19 +188,27 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
-  // Link transaction to order
-  await supabase.from('payments').update({
+  const { data: updatedPayment, error: updateError } = await supabase.from('payments').update({
     payme_transaction_id: paymeId,
     status: 'pending',
     payme_time: time
-  }).eq('order_id', orderId);
+  }).eq('order_id', orderId).select().single();
+
+  if (updateError || !updatedPayment) {
+    console.error(`[Payme] CreateTransaction Update Error for order ${orderId}:`, updateError);
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31008, "Ошибка базы данных", "Ma'lumotlar bazasi xatosi", "Database error")
+    });
+  }
 
   return res.json({
     jsonrpc: "2.0",
     id,
     result: {
-      create_time: Number(time),
-      transaction: payment.id.toString(),
+      create_time: Number(updatedPayment.payme_time),
+      transaction: updatedPayment.id.toString(),
       state: 1
     }
   });
@@ -247,16 +255,34 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
   }
   newExpiryDate.setMonth(newExpiryDate.getMonth() + months);
 
-  await supabase.from('profiles').update({
+  const { error: profileError } = await supabase.from('profiles').update({
     subscription_tier: 'PREMIUM',
     subscription_expires_at: newExpiryDate.toISOString()
   }).eq('id', payment.user_id);
 
+  if (profileError) {
+    console.error("[Payme] PerformTransaction Profile Update Error:", profileError);
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31008, "Ошибка обновления профиля", "Profilni yangilashda xato", "Profile update error")
+    });
+  }
+
   const now = Date.now();
-  await supabase.from('payments').update({
+  const { error: paymentUpdateError } = await supabase.from('payments').update({
     status: 'paid',
     updated_at: new Date(now).toISOString()
   }).eq('id', payment.id);
+
+  if (paymentUpdateError) {
+    console.error("[Payme] PerformTransaction Payment Update Error:", paymentUpdateError);
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31008, "Ошибка обновления платежа", "To'lovni yangilashda xato", "Payment update error")
+    });
+  }
 
   return res.json({
     jsonrpc: "2.0",
@@ -289,11 +315,20 @@ async function handleCancelTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
-  await supabase.from('payments').update({
+  const { error: cancelError } = await supabase.from('payments').update({
     status: 'cancelled',
     updated_at: new Date().toISOString(),
     cancel_reason: reason
   }).eq('id', payment.id);
+
+  if (cancelError) {
+    console.error("[Payme] CancelTransaction Error:", cancelError);
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31008, "Ошибка отмены транзакции", "Tranzaksiyani bekor qilishda xato", "Cancel transaction error")
+    });
+  }
 
   return res.json({
     jsonrpc: "2.0",
@@ -309,7 +344,14 @@ async function handleCancelTransaction(params: any, id: any, res: VercelResponse
 async function handleCheckTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId } = params;
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-  if (!payment) return res.json({ jsonrpc: "2.0", id, error: { code: -31003, message: "Transaction not found" } });
+  
+  if (!payment) {
+    return res.json({ 
+      jsonrpc: "2.0", 
+      id, 
+      error: createError(-31003, "Транзакция не найдена", "Tranzaksiya topilmadi", "Transaction not found")
+    });
+  }
 
   return res.json({
     jsonrpc: "2.0",
