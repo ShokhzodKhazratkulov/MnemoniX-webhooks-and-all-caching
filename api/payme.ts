@@ -1,16 +1,6 @@
 
-import express from "express";
-import type { Request, Response } from "express";
-import path from "path";
-import { createServer as createViteServer } from "vite";
-import bodyParser from "body-parser";
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from "@supabase/supabase-js";
-import dotenv from "dotenv";
-
-dotenv.config();
-
-const app = express();
-const PORT = 3000;
 
 // Initialize Supabase Admin client
 const supabase = createClient(
@@ -18,37 +8,31 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || ""
 );
 
-app.use(bodyParser.json());
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Payme Merchant API Handler
+  // Doc: https://developer.help.paycom.uz/metody-merchant-api
+  
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-// Payme Merchant API Handler
-/**
- * PAYME MERCHANT API HANDLER
- * This endpoint implements the Payme Merchant JSON-RPC 2.0 protocol.
- * Doc: https://developer.help.paycom.uz/metody-merchant-api
- */
-app.post(["/api/payme", "/api/webhooks/payme"], async (req: Request, res: Response) => {
   const { method, params, id } = req.body;
   const authHeader = req.headers.authorization;
 
-  // Debug logging for webhook tracking
-  console.log(`[Payme Webhook] Method: ${method}, ID: ${id}, Params:`, JSON.stringify(params));
+  console.log(`[Vercel Payme] Method: ${method}, ID: ${id}`);
 
   // Basic Auth Check
-  // Payme sends: Authorization: Basic Base64(Paycom:SECRET_KEY)
   const paymeKey = process.env.PAYME_KEY;
   if (!paymeKey) {
-    console.error("PAYME_KEY is not defined in environment variables");
     return res.json({ id, error: { code: -32504, message: "Server configuration error" } });
   }
 
   const expectedAuth = `Basic ${Buffer.from(`Paycom:${paymeKey}`).toString('base64')}`;
   
   if (!authHeader || authHeader !== expectedAuth) {
-    console.warn("Unauthorized Payme request attempted. Header:", authHeader);
     return res.json({ id, error: { code: -32504, message: "Error auth" } });
   }
 
-  // Payme Protocol Implementation
   try {
     switch (method) {
       case "CheckPerformTransaction":
@@ -64,40 +48,26 @@ app.post(["/api/payme", "/api/webhooks/payme"], async (req: Request, res: Respon
       case "GetStatement":
         return await handleGetStatement(params, id, res);
       default:
-        console.warn(`[Payme Webhook] Unknown method: ${method}`);
         return res.json({ id, error: { code: -32601, message: "Method not found" } });
     }
   } catch (err) {
     console.error("Payme API Error:", err);
     return res.json({ id, error: { code: -31008, message: "Internal Server Error" } });
   }
-});
+}
 
-// --- Payme Protocol Method Handlers ---
+// --- Handler Functions (Adapted for VercelResponse) ---
 
-/**
- * Validates if an order exists and matches the requested amount before allowing transaction initiation.
- */
-async function handleCheckPerform(params: any, id: any, res: any) {
+async function handleCheckPerform(params: any, id: any, res: VercelResponse) {
   const { amount, account } = params;
   const orderId = account.order_id;
+  if (!orderId) return res.json({ id, error: { code: -31050, message: "Order ID missing" } });
 
-  if (!orderId) {
-    return res.json({ id, error: { code: -31050, message: "Order ID missing" } });
-  }
+  const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
+  if (!payment) return res.json({ id, error: { code: -31050, message: "Order not found" } });
 
-  // Check if payment already exists in database
-  const { data: payment, error } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
-
-  if (error || !payment) {
-    return res.json({ id, error: { code: -31050, message: "Order not found" } });
-  }
-
-  // Payme amounts are in Tiyin (1 UZS = 100 Tiyin)
-  // We store amount in UZS in our database, so we multiply by 100 for comparison
   const expectedAmountInTiyin = Number(payment.amount) * 100;
   if (expectedAmountInTiyin !== Number(amount)) {
-    console.warn(`[Payme] Amount mismatch. Expected: ${expectedAmountInTiyin}, Received: ${amount}`);
     return res.json({ id, error: { code: -31050, message: "Incorrect amount" } });
   }
 
@@ -113,29 +83,19 @@ async function handleCheckPerform(params: any, id: any, res: any) {
   });
 }
 
-/**
- * Creates a pending transaction state in our database associated with a Payme transaction ID.
- */
-async function handleCreateTransaction(params: any, id: any, res: any) {
-  const { id: paymeId, time, amount, account } = params;
+async function handleCreateTransaction(params: any, id: any, res: VercelResponse) {
+  const { id: paymeId, time, account } = params;
   const orderId = account.order_id;
 
   const { data: payment } = await supabase.from('payments').select('*').eq('order_id', orderId).maybeSingle();
+  if (!payment) return res.json({ id, error: { code: -31050, message: "Order not found" } });
 
-  if (!payment) {
-    return res.json({ id, error: { code: -31050, message: "Order not found" } });
-  }
-
-  // If transaction already exists but has different ID
   if (payment.payme_transaction_id && payment.payme_transaction_id !== paymeId) {
-    return res.json({ id, error: { code: -31099, message: "Transaction already exists with different ID" } });
+    return res.json({ id, error: { code: -31099, message: "Transaction already exists" } });
   }
 
-  // IDEMPOTENCY: If transaction already exists with same ID, just return it
   if (payment.payme_transaction_id === paymeId) {
-    if (payment.status === 'cancelled') {
-        return res.json({ id, error: { code: -31008, message: "Transaction already cancelled" } });
-    }
+    if (payment.status === 'cancelled') return res.json({ id, error: { code: -31008, message: "Transaction already cancelled" } });
     return res.json({
       id,
       result: {
@@ -146,14 +106,11 @@ async function handleCreateTransaction(params: any, id: any, res: any) {
     });
   }
 
-  // Update payment with payme transaction ID and state
-  const { error: updateError } = await supabase.from('payments').update({
+  await supabase.from('payments').update({
     payme_transaction_id: paymeId,
     status: 'pending',
     payme_time: time
   }).eq('order_id', orderId);
-
-  if (updateError) throw updateError;
 
   return res.json({
     id,
@@ -165,17 +122,10 @@ async function handleCreateTransaction(params: any, id: any, res: any) {
   });
 }
 
-/**
- * Marks a transaction as completed, updates the user's subscription expiry, and activates premium features.
- */
-async function handlePerformTransaction(params: any, id: any, res: any) {
+async function handlePerformTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId } = params;
-
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-
-  if (!payment) {
-    return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
-  }
+  if (!payment) return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
 
   if (payment.status === 'paid') {
     return res.json({
@@ -188,14 +138,9 @@ async function handlePerformTransaction(params: any, id: any, res: any) {
     });
   }
 
-  if (payment.status === 'cancelled') {
-    return res.json({ id, error: { code: -31008, message: "Cannot perform cancelled transaction" } });
-  }
+  if (payment.status === 'cancelled') return res.json({ id, error: { code: -31008, message: "Cannot perform cancelled" } });
 
-  // FULFILLMENT: Calculate subscription expansion
   const months = payment.package_type === '1_month' ? 1 : payment.package_type === '3_months' ? 3 : 6;
-  
-  // Get current profile to check if they already have premium to extend it
   const { data: profile } = await supabase.from('profiles').select('subscription_expires_at').eq('id', payment.user_id).single();
   
   let newExpiryDate = new Date();
@@ -204,13 +149,11 @@ async function handlePerformTransaction(params: any, id: any, res: any) {
   }
   newExpiryDate.setMonth(newExpiryDate.getMonth() + months);
 
-  // Update Profile - atomic operation would be better but this is fine for now
   await supabase.from('profiles').update({
     subscription_tier: 'PREMIUM',
     subscription_expires_at: newExpiryDate.toISOString()
   }).eq('id', payment.user_id);
 
-  // Update Payment Status
   const now = Date.now();
   await supabase.from('payments').update({
     status: 'paid',
@@ -227,18 +170,12 @@ async function handlePerformTransaction(params: any, id: any, res: any) {
   });
 }
 
-async function handleCancelTransaction(params: any, id: any, res: any) {
+async function handleCancelTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId, reason } = params;
-
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
+  if (!payment) return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
 
-  if (!payment) {
-    return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
-  }
-
-  if (payment.status === 'paid') {
-    return res.json({ id, error: { code: -31007, message: "Cannot cancel paid transaction" } });
-  }
+  if (payment.status === 'paid') return res.json({ id, error: { code: -31007, message: "Cannot cancel paid" } });
 
   await supabase.from('payments').update({
     status: 'cancelled',
@@ -256,14 +193,10 @@ async function handleCancelTransaction(params: any, id: any, res: any) {
   });
 }
 
-async function handleCheckTransaction(params: any, id: any, res: any) {
+async function handleCheckTransaction(params: any, id: any, res: VercelResponse) {
   const { id: paymeId } = params;
-
   const { data: payment } = await supabase.from('payments').select('*').eq('payme_transaction_id', paymeId).maybeSingle();
-
-  if (!payment) {
-    return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
-  }
+  if (!payment) return res.json({ id, error: { code: -31003, message: "Transaction not found" } });
 
   return res.json({
     id,
@@ -278,19 +211,14 @@ async function handleCheckTransaction(params: any, id: any, res: any) {
   });
 }
 
-async function handleGetStatement(params: any, id: any, res: any) {
+async function handleGetStatement(params: any, id: any, res: VercelResponse) {
   const { from, to } = params;
-  
-  const { data: payments } = await supabase
-    .from('payments')
-    .select('*')
-    .gte('payme_time', from)
-    .lte('payme_time', to);
+  const { data: payments } = await supabase.from('payments').select('*').gte('payme_time', from).lte('payme_time', to);
 
   const transactions = (payments || []).map(p => ({
     id: p.payme_transaction_id,
     time: Number(p.payme_time),
-    amount: Number(p.amount) * 100, // Return in Tiyin
+    amount: Number(p.amount) * 100,
     account: { order_id: p.order_id },
     create_time: Number(p.payme_time),
     perform_time: p.status === 'paid' ? new Date(p.updated_at).getTime() : 0,
@@ -300,32 +228,5 @@ async function handleGetStatement(params: any, id: any, res: any) {
     reason: p.cancel_reason || null
   }));
 
-  return res.json({
-    id,
-    result: { transactions }
-  });
+  return res.json({ id, result: { transactions } });
 }
-
-// --- Vite and SPA Fallback ---
-
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*all", (req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
-
-startServer();

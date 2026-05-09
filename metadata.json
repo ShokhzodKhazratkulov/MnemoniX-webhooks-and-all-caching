@@ -1,6 +1,6 @@
 {
   "name": "MnemoniX: Monetize app - payme start on 05/06",
-  "description": "Payment is added, problem is server.ts not working. adding Privacy policy, term of use. Fixing and deployment on vercel or hostinger.",
+  "description": "Vocabulary learning app with premium features. Integrated with Payme for payments using Vercel Serverless Functions.",
   "requestFramePermissions": [
     "microphone"
   ]
