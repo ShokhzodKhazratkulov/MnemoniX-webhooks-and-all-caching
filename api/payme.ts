@@ -159,6 +159,7 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
+  // Idempotency: If the SAME Payme transaction is already linked to this order
   if (payment.payme_transaction_id === paymeId) {
     if (payment.status === 'cancelled') {
         return res.json({ 
@@ -178,6 +179,7 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
+  // If order already has a DIFFERENT transaction linked
   if (payment.payme_transaction_id) {
     return res.json({ 
       jsonrpc: "2.0", 
@@ -186,6 +188,7 @@ async function handleCreateTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
+  // Link transaction to order
   await supabase.from('payments').update({
     payme_transaction_id: paymeId,
     status: 'pending',
