@@ -257,7 +257,9 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
 
   const { error: profileError } = await supabase.from('profiles').update({
     subscription_tier: 'PREMIUM',
-    subscription_expires_at: newExpiryDate.toISOString()
+    subscription_expires_at: newExpiryDate.toISOString(),
+    subscription_id: paymeId,
+    is_pro: true
   }).eq('id', payment.user_id);
 
   if (profileError) {
@@ -325,6 +327,19 @@ async function handleCancelTransaction(params: any, id: any, res: VercelResponse
   if (payment.status === 'paid') {
     // Refund: transition from 2 -> -2
     const now = Date.now();
+    
+    // Revoke subscription on refund
+    const { error: profileUpgradeError } = await supabase.from('profiles').update({
+      subscription_tier: 'FREE',
+      subscription_expires_at: null,
+      subscription_id: null,
+      is_pro: false
+    }).eq('id', payment.user_id);
+
+    if (profileUpgradeError) {
+      console.error("[Payme] CancelTransaction Profile Revoke Error:", profileUpgradeError);
+    }
+
     const { error: cancelError } = await supabase.from('payments').update({
       status: 'cancelled',
       cancel_time: now,

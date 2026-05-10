@@ -310,16 +310,38 @@ export default function App() {
       if (error && error.code !== 'PGRST116') throw error;
 
       if (data) {
-        setUserProfile(data);
-        // Update cache safely
-        safeSetLocalStorage(cacheKey, JSON.stringify(data));
-        
         // Sync email if missing
         if (!data.email && user?.email) {
           supabase.from('profiles').update({ email: user.email }).eq('id', userId).then(({ error }) => {
-            if (!error) setUserProfile(prev => prev ? { ...prev, email: user.email } as UserProfileType : null);
+            if (!error) setUserProfile(prev => prev ? { ...prev, email: user.email } : null);
           });
         }
+
+        // Lazy cleanup for expired subscriptions
+        if (data.subscription_tier === SubscriptionTier.PREMIUM && data.subscription_expires_at) {
+          const expiry = new Date(data.subscription_expires_at).getTime();
+          if (expiry <= Date.now()) {
+            console.log("Subscription expired, cleaning up...");
+            const { error: cleanupError } = await supabase
+              .from('profiles')
+              .update({ 
+                subscription_tier: SubscriptionTier.FREE,
+                is_pro: false,
+                subscription_id: null
+              })
+              .eq('id', userId);
+            
+            if (!cleanupError) {
+              data.subscription_tier = SubscriptionTier.FREE;
+              data.is_pro = false;
+              data.subscription_id = null;
+            }
+          }
+        }
+
+        setUserProfile(data);
+        // Update cache safely
+        safeSetLocalStorage(cacheKey, JSON.stringify(data));
 
         // Sync app language with user's preferred language only if no UI language is saved
         const savedLang = localStorage.getItem('mnemonix_ui_language');
