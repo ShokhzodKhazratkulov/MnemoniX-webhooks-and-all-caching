@@ -272,6 +272,7 @@ async function handlePerformTransaction(params: any, id: any, res: VercelRespons
   const now = Date.now();
   const { error: paymentUpdateError } = await supabase.from('payments').update({
     status: 'paid',
+    perform_time: now,
     updated_at: new Date(now).toISOString()
   }).eq('id', payment.id);
 
@@ -307,8 +308,22 @@ async function handleCancelTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
+  // Idempotency: If already cancelled, return the stored record
+  if (payment.status === 'cancelled') {
+    const state = (payment.cancel_reason >= 4 || payment.cancel_reason === 5) ? -2 : -1;
+    return res.json({
+      jsonrpc: "2.0",
+      id,
+      result: {
+        cancel_time: Number(payment.cancel_time || 0),
+        transaction: payment.id.toString(),
+        state: state
+      }
+    });
+  }
+
   if (payment.status === 'paid') {
-    // Perform Refund: move state 2 -> -2
+    // Refund: transition from 2 -> -2
     const now = Date.now();
     const { error: cancelError } = await supabase.from('payments').update({
       status: 'cancelled',
@@ -337,6 +352,7 @@ async function handleCancelTransaction(params: any, id: any, res: VercelResponse
     });
   }
 
+  // Normal cancel: transition from 1 -> -1 (pending -> cancelled)
   const now = Date.now();
   const { error: cancelError } = await supabase.from('payments').update({
     status: 'cancelled',
@@ -377,36 +393,14 @@ async function handleCheckTransaction(params: any, id: any, res: VercelResponse)
     });
   }
 
-  // Determine State
-  // 1: Pending, 2: Paid, -1: Cancelled after 1, -2: Cancelled after 2
   let state = 1;
-  let performTime = 0;
+  let performTime = Number(payment.perform_time || 0);
   let cancelTime = Number(payment.cancel_time || 0);
 
   if (payment.status === 'paid') {
     state = 2;
-    performTime = new Date(payment.updated_at).getTime();
   } else if (payment.status === 'cancelled') {
-    // If it was performed before cancellation, state is -2
-    // We check if it ever reached "paid" state by looking for a previous perform_time if we had one
-    // Or simplified: if it has a cancel_time and was canceled from state 2
-    // For the sandbox, if it's cancelled and has a reason that usually implies it's done.
-    // We'll use the 'cancel_reason' or check if updated_at is different from create_time
-    state = payment.cancel_time && payment.status === 'cancelled' && payment.payme_time < (new Date(payment.updated_at).getTime() - 1000) && payment.cancel_reason ? -2 : -1;
-    
-    // Better check: If it reached "paid" status before being "cancelled"
-    // Since we only have one status column, let's assume if it has a cancel_time and a non-zero cancel_reason, 
-    // we should distinguish -1 vs -2.
-    // Payme Sandbox specific: if it expects -2, it means it was state 2 before.
-    // Let's use a simple heuristic: if it was performed, state is -2.
-    // We can't know for sure with current schema unless we add a 'was_performed' flag.
-    // But we know that if we just called PerformTransaction, updated_at was set.
-    state = (payment.status === 'cancelled' && payment.cancel_time > 0) ? (payment.cancel_reason === 5 ? -2 : -1) : state;
-    if (payment.status === 'cancelled') {
-        // If it was cancelled after being paid (reason 5 or similar), return -2
-        // Sandbox uses reason 5 for refund tests usually
-        state = (payment.cancel_reason >= 4) ? -2 : -1;
-    }
+    state = (payment.cancel_reason >= 4 || payment.cancel_reason === 5) ? -2 : -1;
   }
 
   return res.json({
@@ -414,7 +408,7 @@ async function handleCheckTransaction(params: any, id: any, res: VercelResponse)
     id,
     result: {
       create_time: Number(payment.payme_time || 0),
-      perform_time: state === 2 || state === -2 ? new Date(payment.updated_at).getTime() : 0,
+      perform_time: performTime,
       cancel_time: cancelTime,
       transaction: payment.id.toString(),
       state: state,
@@ -438,7 +432,7 @@ async function handleGetStatement(params: any, id: any, res: VercelResponse) {
       amount: Number(p.amount),
       account: { order_id: p.order_id },
       create_time: Number(p.payme_time),
-      perform_time: (state === 2 || state === -2) ? new Date(p.updated_at).getTime() : 0,
+      perform_time: Number(p.perform_time || 0),
       cancel_time: Number(p.cancel_time || 0),
       transaction: p.id.toString(),
       state: state,
